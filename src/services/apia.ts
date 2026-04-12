@@ -33,7 +33,9 @@ export function getApiaDeadlines(): string {
   const lines = DEADLINES.map((deadline) => {
     const remaining = daysLeft(deadline.date);
     const remainingLabel =
-      remaining >= 0 ? `${remaining} zile ramase` : `expirat acum ${Math.abs(remaining)} zile`;
+      remaining >= 0
+        ? `${remaining} zile ramase`
+        : `expirat acum ${Math.abs(remaining)} zile`;
 
     return `- ${formatDate(deadline.date)}: ${deadline.task} (${remainingLabel})`;
   });
