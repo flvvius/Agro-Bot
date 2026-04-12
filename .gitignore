@@ -31,3 +31,8 @@ lerna-debug.log*
 
 # misc
 .DS_Store
+
+# local planning/docs not for commits
+AGENTS.md*Development Guide.md
+AgroBot*Agronomul digital gratuit al fermierului roman(1).md
+AgroBot*Plan de dezvoltare iterativ.md
