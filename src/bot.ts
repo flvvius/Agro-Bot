@@ -1,6 +1,9 @@
 import { Chat } from "chat";
 import { createWhatsAppAdapter } from "@chat-adapter/whatsapp";
 import { createMemoryState } from "@chat-adapter/state-memory";
+import { getWeatherForecast } from "./services/weather";
+import { getBrmPrices } from "./services/prices";
+import { getApiaDeadlines } from "./services/apia";
 
 type WhatsAppBindings = {
   WHATSAPP_ACCESS_TOKEN: string;
@@ -12,9 +15,15 @@ type WhatsAppBindings = {
 let cachedBot: Chat | null = null;
 let cachedKey = "";
 
-function buildResponseText(text: string): string {
+async function buildResponseText(text: string): Promise<string> {
   if (text === "ajutor") {
-    return "Comenzi disponibile: ajutor, vreme <localitate>, preturi, apia.";
+    return [
+      "Comenzi disponibile:",
+      "- ajutor",
+      "- vreme <localitate>",
+      "- preturi",
+      "- apia",
+    ].join("\n");
   }
 
   if (text.startsWith("vreme")) {
@@ -23,15 +32,15 @@ function buildResponseText(text: string): string {
       return "Spune-mi si localitatea. Exemplu: vreme Craiova";
     }
 
-    return `Momentan sunt in modul prototip. Am notat cererea pentru vreme in ${location}.`;
+    return await getWeatherForecast(location);
   }
 
   if (text === "preturi") {
-    return "Preturi BRM in curand. Trimite 'ajutor' pentru comenzi.";
+    return await getBrmPrices();
   }
 
   if (text === "apia") {
-    return "Calendar APIA in curand. Trimite 'ajutor' pentru comenzi.";
+    return await getApiaDeadlines();
   }
 
   return "Salut! Sunt AgroBot. Trimite 'ajutor' pentru comenzi.";
@@ -126,7 +135,7 @@ async function handleIncomingText(
     return;
   }
 
-  const responseText = buildResponseText(text);
+  const responseText = await buildResponseText(text);
   await sendWhatsAppText(env, recipientId, responseText);
 }
 
