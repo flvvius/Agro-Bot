@@ -17,3 +17,14 @@ export const priceCache = sqliteTable("price_cache", {
   data: text("data"),
   fetchedAt: integer("fetched_at", { mode: "timestamp" }),
 });
+
+export const diagnoses = sqliteTable("diagnoses", {
+  id: text("id").primaryKey(),
+  farmerId: text("farmer_id"),
+  imageKey: text("image_key"),
+  diagnosis: text("diagnosis"),
+  confidence: text("confidence"),
+  geminiResponse: text("gemini_response"),
+  feedbackCorrect: integer("feedback_correct"),
+  createdAt: integer("created_at", { mode: "timestamp" }),
+});

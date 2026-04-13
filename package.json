@@ -8,7 +8,7 @@
     "db:tables": "wrangler d1 execute agrobot-db --remote --command \"SELECT name FROM sqlite_master WHERE type='table' ORDER BY name;\"",
     "db:farmers": "wrangler d1 execute agrobot-db --remote --command \"SELECT id, phone, name, location, crops, onboarding_step, onboarding_completed, created_at, last_active FROM farmers ORDER BY last_active DESC LIMIT 50;\"",
     "db:farmers:count": "wrangler d1 execute agrobot-db --remote --command \"SELECT COUNT(*) AS farmers_count FROM farmers;\"",
-    "db:rows": "wrangler d1 execute agrobot-db --remote --command \"SELECT 'farmers' AS table_name, COUNT(*) AS rows_count FROM farmers UNION ALL SELECT 'price_cache' AS table_name, COUNT(*) AS rows_count FROM price_cache;\""
+    "db:rows": "wrangler d1 execute agrobot-db --remote --command \"SELECT 'farmers' AS table_name, COUNT(*) AS rows_count FROM farmers UNION ALL SELECT 'price_cache' AS table_name, COUNT(*) AS rows_count FROM price_cache UNION ALL SELECT 'diagnoses' AS table_name, COUNT(*) AS rows_count FROM diagnoses;\""
   },
   "dependencies": {
     "@chat-adapter/state-memory": "^4.25.0",

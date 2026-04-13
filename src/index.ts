@@ -1,12 +1,13 @@
 import { Hono } from "hono";
 import { getBot } from "./bot";
-import { getWeatherForecast } from "./services/weather";
+import { getWeatherForecast, getWeatherTreatmentWindow } from "./services/weather";
 import { getBrmPrices } from "./services/prices";
 import { getApiaDeadlines } from "./services/apia";
 import { diagnoseFromWhatsAppMedia } from "./services/diagnosis";
 
 type Bindings = {
   DB?: D1Database;
+  BUCKET?: R2Bucket;
   WHATSAPP_ACCESS_TOKEN: string;
   WHATSAPP_APP_SECRET: string;
   WHATSAPP_PHONE_NUMBER_ID: string;
@@ -29,6 +30,17 @@ type FarmerRow = {
   crops: string | null;
   onboarding_step: string | null;
   onboarding_completed: number | null;
+};
+
+type DiagnosisRow = {
+  id: string;
+  farmer_id: string;
+  image_key: string;
+  diagnosis: string;
+  confidence: string;
+  gemini_response: string;
+  feedback_correct: number | null;
+  created_at: number;
 };
 
 async function buildResponseText(text: string): Promise<string> {
@@ -114,7 +126,9 @@ async function ensureFarmerTable(env: Bindings): Promise<void> {
   ).run();
 
   try {
-    await env.DB.prepare("ALTER TABLE farmers ADD COLUMN onboarding_step TEXT").run();
+    await env.DB.prepare(
+      "ALTER TABLE farmers ADD COLUMN onboarding_step TEXT",
+    ).run();
   } catch {
     // no-op if already exists
   }
@@ -185,6 +199,59 @@ async function getOrCreateFarmer(
   return { farmer, created: false };
 }
 
+async function ensureDiagnosesTable(env: Bindings): Promise<void> {
+  if (!env.DB) return;
+
+  await env.DB.prepare(
+    `
+      CREATE TABLE IF NOT EXISTS diagnoses (
+        id TEXT PRIMARY KEY,
+        farmer_id TEXT,
+        image_key TEXT,
+        diagnosis TEXT,
+        confidence TEXT,
+        gemini_response TEXT,
+        feedback_correct INTEGER,
+        created_at INTEGER
+      )
+    `,
+  ).run();
+}
+
+function getExtensionFromMimeType(mimeType: string): string {
+  const cleaned = mimeType.toLowerCase();
+  if (cleaned.includes("png")) return "png";
+  if (cleaned.includes("webp")) return "webp";
+  return "jpg";
+}
+
+async function saveDiagnosis(
+  env: Bindings,
+  row: DiagnosisRow,
+): Promise<void> {
+  if (!env.DB) return;
+
+  await ensureDiagnosesTable(env);
+  await env.DB.prepare(
+    `
+      INSERT INTO diagnoses (
+        id, farmer_id, image_key, diagnosis, confidence, gemini_response, feedback_correct, created_at
+      ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+    `,
+  )
+    .bind(
+      row.id,
+      row.farmer_id,
+      row.image_key,
+      row.diagnosis,
+      row.confidence,
+      row.gemini_response,
+      row.feedback_correct,
+      row.created_at,
+    )
+    .run();
+}
+
 async function handleOnboarding(
   env: Bindings,
   phone: string,
@@ -233,7 +300,8 @@ async function handleOnboarding(
 
   if (step === "crops") {
     const crops = text.trim();
-    if (!crops) return "Scrie-mi culturile principale ca sa finalizez profilul.";
+    if (!crops)
+      return "Scrie-mi culturile principale ca sa finalizez profilul.";
 
     await env.DB.prepare(
       "UPDATE farmers SET crops = ?2, onboarding_step = 'done', onboarding_completed = 1, last_active = ?3 WHERE id = ?1",
@@ -322,8 +390,47 @@ app.post("/webhook", async (c) => {
 
   if (from && messageType === "image" && imageMediaId) {
     try {
-      const diagnosis = await diagnoseFromWhatsAppMedia(imageMediaId, c.env);
-      await sendWhatsAppText(c.env, from, diagnosis);
+      const result = await diagnoseFromWhatsAppMedia(imageMediaId, c.env);
+      const { farmer } = await getOrCreateFarmer(c.env, from);
+
+      let imageKey = "";
+      if (c.env.BUCKET) {
+        const extension = getExtensionFromMimeType(result.mimeType);
+        imageKey = `incoming/${from}/${Date.now()}-${imageMediaId}.${extension}`;
+        await c.env.BUCKET.put(imageKey, result.mediaBytes, {
+          httpMetadata: { contentType: result.mimeType },
+        });
+      }
+
+      const weatherWindow = farmer.location
+        ? await getWeatherTreatmentWindow(farmer.location)
+        : null;
+
+      const finalReply = weatherWindow
+        ? `${result.diagnosisText}\n\n${weatherWindow}`
+        : result.diagnosisText;
+
+      await saveDiagnosis(c.env, {
+        id: crypto.randomUUID(),
+        farmer_id: from,
+        image_key: imageKey,
+        diagnosis: finalReply,
+        confidence: result.confidence,
+        gemini_response: result.rawModelText,
+        feedback_correct: null,
+        created_at: Math.floor(Date.now() / 1000),
+      });
+
+      console.log("[webhook] image diagnosis completed", {
+        from,
+        elapsedMs: result.elapsedMs,
+        slowerThan15s: result.elapsedMs > 15000,
+        uncertain: result.uncertain,
+        hasWeatherWindow: Boolean(weatherWindow),
+        savedToR2: imageKey.length > 0,
+      });
+
+      await sendWhatsAppText(c.env, from, finalReply);
       return c.text("OK");
     } catch (error) {
       console.error("[webhook] image diagnosis failed", {
@@ -332,7 +439,7 @@ app.post("/webhook", async (c) => {
       await sendWhatsAppText(
         c.env,
         from,
-        "Nu pot analiza poza acum. Incearca din nou in cateva minute.",
+        "Nu pot identifica clar problema din poza. Trimite una mai apropiata sau incearca din nou in cateva minute.\n⚠️ Diagnostic orientativ. Confirma cu un agronom.",
       );
       return c.text("OK");
     }
