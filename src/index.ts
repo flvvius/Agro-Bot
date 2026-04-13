@@ -414,7 +414,7 @@ app.post("/webhook", async (c) => {
         id: crypto.randomUUID(),
         farmer_id: from,
         image_key: imageKey,
-        diagnosis: finalReply,
+        diagnosis: result.diagnosisSummary,
         confidence: result.confidence,
         gemini_response: result.rawModelText,
         feedback_correct: null,

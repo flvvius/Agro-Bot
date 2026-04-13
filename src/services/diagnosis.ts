@@ -5,6 +5,7 @@ type DiagnosisEnv = {
 
 export type DiagnosisResult = {
   diagnosisText: string;
+  diagnosisSummary: string;
   rawModelText: string;
   mimeType: string;
   mediaBytes: Uint8Array;
@@ -150,12 +151,76 @@ function extractConfidence(
   text: string,
 ): "scazut" | "mediu" | "ridicat" | "necunoscut" {
   const normalized = text.toLowerCase();
-  if (normalized.includes("ridicat")) return "ridicat";
-  if (normalized.includes("mediu")) return "mediu";
-  if (normalized.includes("scazut") || normalized.includes("scăzut")) {
-    return "scazut";
+
+  const lines = normalized
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+
+  const confidenceLine = lines.find(
+    (line) => line.includes("incredere") || line.includes("încredere"),
+  );
+
+  const source = confidenceLine ?? normalized;
+  if (source.includes("scazut") || source.includes("scăzut")) return "scazut";
+  if (source.includes("mediu")) return "mediu";
+  if (source.includes("ridicat")) {
+    return "ridicat";
   }
+
   return "necunoscut";
+}
+
+function extractDiagnosisSummary(rawText: string): string {
+  const withoutDisclaimer = rawText.replace(DISCLAIMER, "").trim();
+  const lines = withoutDisclaimer
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+
+  for (const line of lines) {
+    const lower = line.toLowerCase();
+    if (lower.includes("diagnostic")) {
+      const normalizedLine = line
+        .replace(/^\d+\s*[).:-]?\s*/u, "")
+        .replace(/^[*-]\s*/u, "");
+      const parts = normalizedLine.split(/[:\-]/u);
+      const maybeValue = parts.length > 1 ? parts.slice(1).join("-").trim() : "";
+      if (maybeValue.length > 0) {
+        return maybeValue;
+      }
+      return normalizedLine.trim();
+    }
+  }
+
+  if (lines.length > 0) {
+    return lines[0]
+      .replace(/^\d+\s*[).:-]?\s*/u, "")
+      .replace(/^[*-]\s*/u, "")
+      .trim();
+  }
+
+  return "Diagnostic indisponibil";
+}
+
+function applyReadableSpacing(rawText: string): string {
+  const lines = rawText
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line, index, arr) => line.length > 0 || arr[index - 1] !== "");
+
+  const output: string[] = [];
+  const sectionStart = /^((\d+\s*[).:-])|(diagnostic|nivel|tratament|moment)\b)/iu;
+
+  for (const line of lines) {
+    const shouldPad = sectionStart.test(line);
+    if (shouldPad && output.length > 0 && output[output.length - 1] !== "") {
+      output.push("");
+    }
+    output.push(line);
+  }
+
+  return output.join("\n").trim();
 }
 
 function normalizeDiagnosisText(rawText: string): { text: string; uncertain: boolean } {
@@ -174,9 +239,9 @@ function normalizeDiagnosisText(rawText: string): { text: string; uncertain: boo
     };
   }
 
-  const base = rawText.trim();
+  const base = applyReadableSpacing(rawText.trim());
   if (!base.includes(DISCLAIMER)) {
-    return { text: `${base}\n${DISCLAIMER}`, uncertain: false };
+    return { text: `${base}\n\n${DISCLAIMER}`, uncertain: false };
   }
 
   return { text: base, uncertain: false };
@@ -190,9 +255,13 @@ export async function diagnoseFromWhatsAppMedia(
   const media = await downloadWhatsAppMedia(mediaId, env);
   const rawModelText = await callGemini(media.mimeType, media.base64, env);
   const normalized = normalizeDiagnosisText(rawModelText);
+  const diagnosisSummary = normalized.uncertain
+    ? "Diagnostic incert"
+    : extractDiagnosisSummary(rawModelText);
 
   return {
     diagnosisText: normalized.text,
+    diagnosisSummary,
     rawModelText,
     mimeType: media.mimeType,
     mediaBytes: media.bytes,
