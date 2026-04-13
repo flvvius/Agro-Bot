@@ -153,6 +153,7 @@ export function getBot(env: WhatsAppBindings): Chat {
 
   const bot = new Chat({
     userName: "agrobot",
+    logger: "silent",
     adapters: {
       whatsapp: createWhatsAppAdapter({
         accessToken: env.WHATSAPP_ACCESS_TOKEN,
