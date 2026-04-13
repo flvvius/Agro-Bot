@@ -3,6 +3,7 @@ import { getBot } from "./bot";
 import { getWeatherForecast } from "./services/weather";
 import { getBrmPrices } from "./services/prices";
 import { getApiaDeadlines } from "./services/apia";
+import { diagnoseFromWhatsAppMedia } from "./services/diagnosis";
 
 type Bindings = {
   DB?: D1Database;
@@ -17,6 +18,17 @@ type WhatsAppIncomingMessage = {
   from?: string;
   type?: string;
   text?: { body?: string };
+  image?: { id?: string };
+};
+
+type FarmerRow = {
+  id: string;
+  phone: string | null;
+  name: string | null;
+  location: string | null;
+  crops: string | null;
+  onboarding_step: string | null;
+  onboarding_completed: number | null;
 };
 
 async function buildResponseText(text: string): Promise<string> {
@@ -82,12 +94,8 @@ async function sendWhatsAppText(
   console.log("[webhook] outbound send ok", { to, status: response.status });
 }
 
-async function saveFarmerActivity(env: Bindings, phone: string): Promise<void> {
-  if (!env.DB) {
-    return;
-  }
-
-  const now = Math.floor(Date.now() / 1000);
+async function ensureFarmerTable(env: Bindings): Promise<void> {
+  if (!env.DB) return;
 
   await env.DB.prepare(
     `
@@ -97,23 +105,159 @@ async function saveFarmerActivity(env: Bindings, phone: string): Promise<void> {
         name TEXT,
         location TEXT,
         crops TEXT,
+        onboarding_step TEXT,
+        onboarding_completed INTEGER DEFAULT 0,
         created_at INTEGER,
         last_active INTEGER
       )
     `,
   ).run();
 
-  await env.DB.prepare(
+  try {
+    await env.DB.prepare("ALTER TABLE farmers ADD COLUMN onboarding_step TEXT").run();
+  } catch {
+    // no-op if already exists
+  }
+
+  try {
+    await env.DB.prepare(
+      "ALTER TABLE farmers ADD COLUMN onboarding_completed INTEGER DEFAULT 0",
+    ).run();
+  } catch {
+    // no-op if already exists
+  }
+}
+
+async function getOrCreateFarmer(
+  env: Bindings,
+  phone: string,
+): Promise<{ farmer: FarmerRow; created: boolean }> {
+  if (!env.DB) {
+    throw new Error("D1 DB binding missing");
+  }
+
+  await ensureFarmerTable(env);
+  const now = Math.floor(Date.now() / 1000);
+
+  let farmer = await env.DB.prepare(
     `
-      INSERT INTO farmers (id, phone, created_at, last_active)
-      VALUES (?1, ?2, ?3, ?4)
-      ON CONFLICT(id) DO UPDATE SET
-        last_active = excluded.last_active,
-        phone = excluded.phone
+      SELECT id, phone, name, location, crops, onboarding_step, onboarding_completed
+      FROM farmers
+      WHERE id = ?1
+      LIMIT 1
     `,
   )
-    .bind(phone, phone, now, now)
+    .bind(phone)
+    .first<FarmerRow>();
+
+  if (!farmer) {
+    await env.DB.prepare(
+      `
+        INSERT INTO farmers (id, phone, onboarding_step, onboarding_completed, created_at, last_active)
+        VALUES (?1, ?2, 'name', 0, ?3, ?3)
+      `,
+    )
+      .bind(phone, phone, now)
+      .run();
+
+    farmer = await env.DB.prepare(
+      `
+        SELECT id, phone, name, location, crops, onboarding_step, onboarding_completed
+        FROM farmers
+        WHERE id = ?1
+        LIMIT 1
+      `,
+    )
+      .bind(phone)
+      .first<FarmerRow>();
+
+    if (!farmer) {
+      throw new Error("Failed to create farmer row");
+    }
+
+    return { farmer, created: true };
+  }
+
+  await env.DB.prepare("UPDATE farmers SET last_active = ?2 WHERE id = ?1")
+    .bind(phone, now)
     .run();
+
+  return { farmer, created: false };
+}
+
+async function handleOnboarding(
+  env: Bindings,
+  phone: string,
+  text: string,
+): Promise<string | null> {
+  if (!env.DB) return null;
+
+  const now = Math.floor(Date.now() / 1000);
+  const { farmer, created } = await getOrCreateFarmer(env, phone);
+
+  if (created) {
+    return "Bun venit la AgroBot! Ca sa te ajut mai bine, cum te numesti?";
+  }
+
+  if ((farmer.onboarding_completed ?? 0) === 1) {
+    return null;
+  }
+
+  const step = farmer.onboarding_step ?? "name";
+
+  if (step === "name") {
+    const name = text.trim();
+    if (!name) return "Cum te numesti?";
+
+    await env.DB.prepare(
+      "UPDATE farmers SET name = ?2, onboarding_step = 'location', last_active = ?3 WHERE id = ?1",
+    )
+      .bind(phone, name, now)
+      .run();
+
+    return `Multumesc, ${name}! In ce localitate ai ferma?`;
+  }
+
+  if (step === "location") {
+    const location = text.trim();
+    if (!location) return "Spune-mi localitatea fermei tale.";
+
+    await env.DB.prepare(
+      "UPDATE farmers SET location = ?2, onboarding_step = 'crops', last_active = ?3 WHERE id = ?1",
+    )
+      .bind(phone, location, now)
+      .run();
+
+    return "Perfect. Ce culturi principale ai? (ex: grau, porumb, floarea-soarelui)";
+  }
+
+  if (step === "crops") {
+    const crops = text.trim();
+    if (!crops) return "Scrie-mi culturile principale ca sa finalizez profilul.";
+
+    await env.DB.prepare(
+      "UPDATE farmers SET crops = ?2, onboarding_step = 'done', onboarding_completed = 1, last_active = ?3 WHERE id = ?1",
+    )
+      .bind(phone, crops, now)
+      .run();
+
+    return [
+      "Super, profilul tau e gata!",
+      "Poti folosi comenzile:",
+      "- ajutor",
+      "- vreme <localitate>",
+      "- preturi",
+      "- apia",
+    ].join("\n");
+  }
+
+  await env.DB.prepare(
+    "UPDATE farmers SET onboarding_step = 'done', onboarding_completed = 1, last_active = ?2 WHERE id = ?1",
+  )
+    .bind(phone, now)
+    .run();
+
+  return null;
 }
 
 const app = new Hono<{ Bindings: Bindings }>();
@@ -173,10 +317,35 @@ app.post("/webhook", async (c) => {
   const firstMessage = value?.messages?.[0];
   const from = firstMessage?.from;
   const text = firstMessage?.text?.body?.trim();
+  const imageMediaId = firstMessage?.image?.id;
+  const messageType = firstMessage?.type;
+
+  if (from && messageType === "image" && imageMediaId) {
+    try {
+      const diagnosis = await diagnoseFromWhatsAppMedia(imageMediaId, c.env);
+      await sendWhatsAppText(c.env, from, diagnosis);
+      return c.text("OK");
+    } catch (error) {
+      console.error("[webhook] image diagnosis failed", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      await sendWhatsAppText(
+        c.env,
+        from,
+        "Nu pot analiza poza acum. Incearca din nou in cateva minute.",
+      );
+      return c.text("OK");
+    }
+  }
 
   if (from && text) {
     try {
-      await saveFarmerActivity(c.env, from);
+      const onboardingReply = await handleOnboarding(c.env, from, text);
+      if (onboardingReply !== null) {
+        await sendWhatsAppText(c.env, from, onboardingReply);
+        return c.text("OK");
+      }
+
       const responseText = await buildResponseText(text);
       await sendWhatsAppText(c.env, from, responseText);
       return c.text("OK");

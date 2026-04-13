@@ -4,6 +4,8 @@ CREATE TABLE IF NOT EXISTS farmers (
   name TEXT,
   location TEXT,
   crops TEXT,
+  onboarding_step TEXT,
+  onboarding_completed INTEGER DEFAULT 0,
   created_at INTEGER,
   last_active INTEGER
 );
