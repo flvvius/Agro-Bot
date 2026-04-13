@@ -5,6 +5,7 @@ import { getBrmPrices } from "./services/prices";
 import { getApiaDeadlines } from "./services/apia";
 
 type Bindings = {
+  DB?: D1Database;
   WHATSAPP_ACCESS_TOKEN: string;
   WHATSAPP_APP_SECRET: string;
   WHATSAPP_PHONE_NUMBER_ID: string;
@@ -81,6 +82,40 @@ async function sendWhatsAppText(
   console.log("[webhook] outbound send ok", { to, status: response.status });
 }
 
+async function saveFarmerActivity(env: Bindings, phone: string): Promise<void> {
+  if (!env.DB) {
+    return;
+  }
+
+  const now = Math.floor(Date.now() / 1000);
+
+  await env.DB.prepare(
+    `
+      CREATE TABLE IF NOT EXISTS farmers (
+        id TEXT PRIMARY KEY,
+        phone TEXT,
+        name TEXT,
+        location TEXT,
+        crops TEXT,
+        created_at INTEGER,
+        last_active INTEGER
+      )
+    `,
+  ).run();
+
+  await env.DB.prepare(
+    `
+      INSERT INTO farmers (id, phone, created_at, last_active)
+      VALUES (?1, ?2, ?3, ?4)
+      ON CONFLICT(id) DO UPDATE SET
+        last_active = excluded.last_active,
+        phone = excluded.phone
+    `,
+  )
+    .bind(phone, phone, now, now)
+    .run();
+}
+
 const app = new Hono<{ Bindings: Bindings }>();
 
 app.get("/", (c) => c.text("AgroBot OK"));
@@ -141,6 +176,7 @@ app.post("/webhook", async (c) => {
 
   if (from && text) {
     try {
+      await saveFarmerActivity(c.env, from);
       const responseText = await buildResponseText(text);
       await sendWhatsAppText(c.env, from, responseText);
       return c.text("OK");
