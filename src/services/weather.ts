@@ -15,10 +15,29 @@ type ForecastDaily = {
 
 function formatDay(dateIso: string): string {
   return new Date(dateIso).toLocaleDateString("ro-RO", {
-    weekday: "short",
+    weekday: "long",
     day: "numeric",
     month: "short",
   });
+}
+
+function getRainLabel(rainMm: number): string {
+  if (rainMm <= 0.5) return "fara ploaie";
+  if (rainMm <= 4) return "ploaie usoara";
+  if (rainMm <= 12) return "ploaie moderata";
+  return "ploaie abundenta";
+}
+
+function getWindLabel(windKmh: number): string {
+  if (windKmh < 15) return "slab";
+  if (windKmh <= 25) return "moderat";
+  return "puternic";
+}
+
+function getFieldAdvice(rainMm: number, windKmh: number): string {
+  if (rainMm > 4) return "EVITA stropirea (risc spalare tratament)";
+  if (windKmh > 25) return "ATENTIE la tratamente (vant puternic)";
+  return "BINE pentru lucrari si tratamente";
 }
 
 async function geocodeLocation(
@@ -93,14 +112,35 @@ export async function getWeatherForecast(location: string): Promise<string> {
       const tMax = Math.round(daily.temperature_2m_max[i]);
       const rain = daily.precipitation_sum[i];
       const wind = Math.round(daily.wind_speed_10m_max[i]);
+      const rainLabel = getRainLabel(rain);
+      const windLabel = getWindLabel(wind);
+      const advice = getFieldAdvice(rain, wind);
 
-      let line = `${label}: ${tMin}/${tMax}C`;
-      if (rain > 0) line += `, ploaie ${rain}mm`;
-      if (wind > 25) line += `, vant ${wind}km/h`;
-      rows.push(line);
+      rows.push(
+        [
+          `${i + 1}. ${label.toUpperCase()}`,
+          `   Temperatura: ${tMin}C ... ${tMax}C`,
+          `   Ploaie: ${rain} mm (${rainLabel})`,
+          `   Vant: ${wind} km/h (${windLabel})`,
+          `   Pentru camp: ${advice}`,
+        ].join("\n"),
+      );
     }
 
-    return [`Prognoza 5 zile pentru ${geo.name}:`, ...rows].join("\n");
+    return [
+      `PROGNOZA PE 5 ZILE - ${geo.name.toUpperCase()}`,
+      "----------------------------------------",
+      ...rows.flatMap((block, idx) =>
+        idx < rows.length - 1
+          ? [block, "----------------------------------------"]
+          : [block],
+      ),
+      "",
+      "Legenda rapida:",
+      "- BINE = conditii bune pentru tratamente",
+      "- ATENTIE = verificare suplimentara inainte de stropire",
+      "- EVITA = mai bine amanat tratamentul",
+    ].join("\n");
   } catch {
     return "Eroare la preluarea vremii. Incearca din nou.";
   }
@@ -145,10 +185,7 @@ export async function getWeatherTreatmentWindow(
       lines.push(line);
     }
 
-    return [
-      `Fereastra meteo 3 zile (${geo.name}):`,
-      ...lines,
-    ].join("\n");
+    return [`Fereastra meteo 3 zile (${geo.name}):`, ...lines].join("\n");
   } catch {
     return null;
   }

@@ -1,10 +1,10 @@
-CREATE TABLE IF NOT EXISTS diagnoses (
-  id TEXT PRIMARY KEY,
-  farmer_id TEXT,
-  image_key TEXT,
-  diagnosis TEXT,
-  confidence TEXT,
-  gemini_response TEXT,
-  feedback_correct INTEGER,
-  created_at INTEGER
+create table if not exists diagnoses (
+   id               text primary key,
+   farmer_id        text,
+   image_key        text,
+   diagnosis        text,
+   confidence       text,
+   gemini_response  text,
+   feedback_correct integer,
+   created_at       integer
 );

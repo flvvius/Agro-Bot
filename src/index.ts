@@ -1,6 +1,9 @@
 import { Hono } from "hono";
 import { getBot } from "./bot";
-import { getWeatherForecast, getWeatherTreatmentWindow } from "./services/weather";
+import {
+  getWeatherForecast,
+  getWeatherTreatmentWindow,
+} from "./services/weather";
 import { getBrmPrices } from "./services/prices";
 import { getApiaDeadlines } from "./services/apia";
 import { diagnoseFromWhatsAppMedia } from "./services/diagnosis";
@@ -225,10 +228,7 @@ function getExtensionFromMimeType(mimeType: string): string {
   return "jpg";
 }
 
-async function saveDiagnosis(
-  env: Bindings,
-  row: DiagnosisRow,
-): Promise<void> {
+async function saveDiagnosis(env: Bindings, row: DiagnosisRow): Promise<void> {
   if (!env.DB) return;
 
   await ensureDiagnosesTable(env);

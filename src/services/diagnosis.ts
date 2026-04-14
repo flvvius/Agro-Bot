@@ -185,7 +185,8 @@ function extractDiagnosisSummary(rawText: string): string {
         .replace(/^\d+\s*[).:-]?\s*/u, "")
         .replace(/^[*-]\s*/u, "");
       const parts = normalizedLine.split(/[:\-]/u);
-      const maybeValue = parts.length > 1 ? parts.slice(1).join("-").trim() : "";
+      const maybeValue =
+        parts.length > 1 ? parts.slice(1).join("-").trim() : "";
       if (maybeValue.length > 0) {
         return maybeValue;
       }
@@ -210,7 +211,8 @@ function applyReadableSpacing(rawText: string): string {
     .filter((line, index, arr) => line.length > 0 || arr[index - 1] !== "");
 
   const output: string[] = [];
-  const sectionStart = /^((\d+\s*[).:-])|(diagnostic|nivel|tratament|moment)\b)/iu;
+  const sectionStart =
+    /^((\d+\s*[).:-])|(diagnostic|nivel|tratament|moment)\b)/iu;
 
   for (const line of lines) {
     const shouldPad = sectionStart.test(line);
@@ -223,7 +225,10 @@ function applyReadableSpacing(rawText: string): string {
   return output.join("\n").trim();
 }
 
-function normalizeDiagnosisText(rawText: string): { text: string; uncertain: boolean } {
+function normalizeDiagnosisText(rawText: string): {
+  text: string;
+  uncertain: boolean;
+} {
   const normalized = rawText.toLowerCase();
   const uncertain =
     normalized.includes("incert") ||
